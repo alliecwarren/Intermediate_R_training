@@ -1,0 +1,167 @@
+---
+title: "Intermediate_R_week3"
+author: "Allie Warren"
+date: "2024-10-08"
+output: html_document
+---
+
+Missing Data
+
+Notes:
+
+This notebook covers some of the material from week 3 of the Intermediate R Datacamp track. It also includes some info that isn't covered in the course, including some functions I recommend.
+
+- This notebook uses data on Percentage of Chronic Conditions among Fee-for-Service Medicare Beneficiaries, Washington State and Counties, 2007-2018, from CMS Medicare Chronic Conditions data
+  - Data source: https://data.wa.gov/Health/Percentage-of-Chronic-Conditions-among-Fee-for-Ser/qb7g-hu6x/about_data
+
+- Notes: course textbook resource: https://psyteachr.github.io/ads-v3/
+ 
+# Loading Packages 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Load packages
+library(tidyverse)
+# might need to install the package first
+# install.packages('naniar')
+# naniar is a package for summarizing and handling missing values in R
+library(naniar)
+# might need to install the package first
+# install.packages('simputation')
+# simputation is a package for imputing data
+library(simputation)
+
+```
+
+# Load Data
+
+Data is on the prevalence of different chronic conditions (Alzheimers, Arthritis, Asthma, Atrial Fibrillation, Autism, COPD, Cancer, Chronic Kidney Disease, Depression, Diabetes, HIV/AIDS, Heart Failure, Hepatitis, Hyperlipedemia, Hypertension, Ischemic Heart Disease, Osteoporosis, Schizophrenia, and Strokes) among Medicare Beneficiaries in Washington counties per year. 
+
+```{r}
+
+# read in data
+# for the base file path I am getting the filepath to the folder of the folder that this script is saved in
+# then adding the folder data to the file path, as the data files for this repo are stored there
+base_path <- file.path(dirname(dirname(rstudioapi::getSourceEditorContext()$path)), "data")
+medicare_file <- "Percentage_of_Chronic_Conditions_Medicare_Beneficiaries__Washington.csv"
+
+med <- read_csv(file.path(base_path, medicare_file))
+
+head(med)
+
+```
+
+# Summarizing Missing Data
+
+Functions to summarize the missing data per variable and overall
+
+```{r}
+# Summary of missing data using function from the naniar package
+missing_med_data <- miss_var_summary(med)
+missing_med_data
+
+# Searching for various types of missing data
+# looking for missing data that is represented by: . or NA (as a string) or -99
+alt_missing_med_data  <- naniar::miss_scan_count(med, c("^\\.$", "NA", "-99"))
+alt_missing_med_data
+```
+
+# Visualizing Missing Data
+
+```{r}
+# plot of the number of missing values per column
+gg_miss_var(med)
+```
+
+
+# Replacing Missing Values
+
+```{r}
+# replace non standard missing values with NA
+# for the column State and County FIPS Code replace any . with NA
+med_cleaned <- replace_with_na(med,
+               replace = list(`State and County FIPS Code` = "."))
+
+```
+
+# Visualizing Missing Data per Group
+
+```{r}
+
+# subsetting data and simplifying column names for visualization
+med_subset <- med_cleaned %>%
+  select(County, FIPS = `State and County FIPS Code`, HIV_AIDS = `HIV/AIDS Prevalence (%)`, ASD =  `Autism Spectrum Disorders Prevalence (%)`, HepBC = `Hepatitis (Chronic Viral B & C) Prevalence (%)`, Psych = `Schizophrenia/Other Psychotic Disorders Prevalence (%)`, Year)
+
+# plot missing data per column by County
+gg_miss_var(med_subset %>% select(-Year), facet = County)
+
+# plot missing data per column by Year
+gg_miss_var(med_subset %>% select(-County), facet = Year)
+
+```
+
+
+# Missing Data and Relationships between Variables
+
+```{r}
+
+# look at the relationship between COPD prevalence and Hypertension prevalence
+# color points by whether that location/year is missing data on stroke prevalence
+ggplot(med_cleaned, aes(`COPD Prevalence (%)`,  `Hypertension Prevalence (%)`, color = is.na(`Stroke Prevalence (%)`))) +
+  geom_point() + theme_minimal() + labs(color = 'Stroke Prevalence Missing')
+
+# look at the relationship between Hypertension prevalence and Stroke prevalence for each location/year
+# (missing values in Stroke Prevalence will not be plotted)
+ggplot(med_cleaned, aes(`Hypertension Prevalence (%)`, `Stroke Prevalence (%)`)) +
+  geom_point() + theme_minimal()
+```
+
+# Imputing Values
+
+Using linear regression imputation methods to impute values for Stroke prevalence based on the
+relationship between stroke prevalence and other chronic conditions
+
+```{r}
+# mark which rows are NA to keep record of after imputation
+med_cleaned <- med_cleaned %>% mutate(Stroke_Flag = is.na(`Stroke Prevalence (%)`))
+
+# select subset of data and simplify column names
+med_cleaned_heart <- med_cleaned %>%
+  select(Stroke_Flag, Stroke_Prev = `Stroke Prevalence (%)`, Diabetes = `Diabetes Prevalence (%)`, 
+         Hypertension = `Hypertension Prevalence (%)`,
+         COPD = `COPD Prevalence (%)`, Ischemic_Heart = `Ischemic Heart Disease Prevalence (%)`, County, Year)
+
+# impute values for stroke prevalence 
+# this assumes a linear relationship between the stroke prevalence and diabetes, hypertension, COPD, and ischemic heart disease prevalence and county
+# then plot the value, highlighting values that were imputed
+med_cleaned_heart %>%
+  impute_lm(Stroke_Prev ~  Diabetes + Hypertension + COPD + Ischemic_Heart + County) %>%
+  arrange(Stroke_Flag) %>%
+  ggplot(aes(x = Ischemic_Heart,
+             y = Stroke_Prev,
+             color = Stroke_Flag, size = Stroke_Flag)) + 
+  scale_size_manual(values = c(2, 3)) +
+  geom_point() +
+  theme_bw() +
+  labs(color = 'Stroke Missing Data', size = 'Stroke Missing Data')
+```
+# Closer Look at the Linear Model
+
+Looking at various linear model for estimating stroke prevalence to evaluate how well we expect the imputation method 
+is doing at estimating missing values
+
+```{r}
+
+# R-Squared: how much of the variance in the dependent variable is explained by the independent variables. The greater the R-Squared, the more predictive power a model has (0 to 1)
+# Coefficient significance: p-value per coefficient
+# Residual standard error (RSE): the average amount that the data points deviate from the regression line. The less deviation there is, the more closely the model matches the data.
+
+
+lin_model <- lm(Stroke_Prev ~ Diabetes + Hypertension + COPD + Ischemic_Heart + County, data = med_cleaned_heart)
+summary(lin_model)
+
+
+# alternative model
+alt_lin_model <- lm(Stroke_Prev ~ COPD + Ischemic_Heart + Year + County, data = med_cleaned_heart)
+summary(alt_lin_model)
+```

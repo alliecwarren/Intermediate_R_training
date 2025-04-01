@@ -1,0 +1,365 @@
+---
+title: "Intermediate_R_week1"
+author: "Allie Warren"
+date: "2024-09-27"
+output: html_document
+---
+
+Notes:
+
+This notebook covers some of the material from course 1 of the Intermediate R datacamp track
+It also includes some info that isn't covered in the course, including some functions I recommend and
+a function I wrote to pull and format ACS data using their API.
+
+Useful features within R Studio:
+- use install.packages('name_of_package') to install a package, then library(name_of_package) to load it
+- use View(df) to pull up a table that you want to look at. If your table is very large this might be slow to load,
+use View(head(df, n = 100)) to view just the first 100 (or however many you specify) rows of the table
+- use ?, such as ?union, in the console to pull up help info about how a function works
+
+The 'Knit' button in the top panel will run all the code and create a HTML file, with text/plots/data embedded 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# load packages - if you don't already have these installed you will need to run install.packages(c('tidyverse', 'httr', 'lubridate'))
+
+library(tidyverse)
+# for fetching ACS data using API 
+library(httr)
+# for working with dates
+library(lubridate)
+```
+
+
+# Helper function for pulling ACS data
+
+This function uses concepts not covered in this course, but can be used to pull and format data from
+ACS using their API. It is used to get example datasets for demonstrating the concepts of the course
+on real world data.
+
+The tidycensus package can also be used to pull ACS data: 
+- https://walker-data.com/census-r/an-introduction-to-tidycensus.html
+- requires getting an API key from: https://api.census.gov/data/key_signup.html
+
+```{r}
+
+# function to pull ACS tables using the API
+# inputs:
+# year: (string) year of data table
+# survey_type: (string) acs5 or acs1
+# group_number: (string) table number
+# location: (string) survey location in ACS format
+# returns: tibble of ACS data
+fetch_acs <- function(year, survey_type, group_number, location) {
+  # API path to specified table
+  acs_url <- file.path("https://api.census.gov/data", year,"acs", survey_type,
+                     paste0("subject?get=group(", group_number,
+                            ")&ucgid=pseudo(", location, ")"))
+  # fetch the table
+  response <- httr::GET(acs_url, httr::timeout(10))
+  acs_response <- httr::content(response)
+  # convert it to a formatted dataframe
+  out_df <- as.data.frame(matrix(data = NA, nrow = (length(acs_response) - 1),
+                                 ncol = length(acs_response[[1]])))
+  # first item in response is column names
+  colnames(out_df) <- unlist(acs_response[[1]])
+  # loop through the other items in response to populate the data frame
+  for(i in 2:length(acs_response)) {
+    cur_row <- unlist(lapply(acs_response[[i]], function(x) ifelse(is.null(x[[1]]), NA, x)))
+    out_df[(i-1),] <- cur_row
+  }
+  # return the table as a tibble
+  return(as.tibble(out_df))
+
+  
+}
+
+```
+
+# Load Data
+```{r}
+
+# Idaho and Washington ACS 5 year 2022 education data
+# "S1501" specifies the ACS tables on EDUCATIONAL ATTAINMENT
+# "0400000US53$0500000" specifies WA, "0400000US16$0500000" specifies Idaho
+education_WA <- fetch_acs("2022", "acs5", "S1501", "0400000US53$0500000")
+education_Idaho <- fetch_acs("2022", "acs5", "S1501", "0400000US16$0500000")
+
+# Washington ACS 5 year 2022 data on poverty rates
+# "S1701" specifies the ACS table on POVERTY STATUS IN THE PAST 12 MONTHS
+poverty_rate <- fetch_acs("2022", "acs5", "S1701", "0400000US53$0500000") 
+
+# example viewing the table
+View(education_WA)
+```
+
+# Combine Data
+```{r}
+
+# combine WA and Idaho data - union combines all rows in the two dataframes excluding duplicates (in this case it will concatenate the two tables)
+# it concatenates columns with the same names - it will fail if columns are not of the same type
+# (for example string in one table and numeric in the other) or if a column exists in only one data frame
+education <- union(education_WA, education_Idaho)
+
+```
+
+# Select & Tidy Evaluation
+- selecting columns
+- !! and !!!
+- enquo()
+- {{}}
+- :=
+
+For more examples/explanations: https://www.r-bloggers.com/2019/12/practical-tidy-evaluation/
+
+```{r}
+# selecting columns
+
+# column names
+common_col <- "NAME"
+# columns in poverty_rate table
+totalpop_determined <- c('S1701_C01_001E', 'S1701_C01_001M') # total population and margin of error
+numbelowpoverty = c('S1701_C02_001E', 'S1701_C02_001M') # number below poverty rate and margin of error
+# columns in education table
+popover25 = c('S1501_C01_006E', 'S1501_C01_006M') # total population over 25 and margin of error
+numover25bachelors <- c('S1501_C01_015E', 'S1501_C01_015M') # number over 25 with a bachelors degree and margin of error
+
+# select relevant variables using {{}} or !!
+# {{}} and !!enquo() do (mostly) the same thing, {{}} is just cleaner to write
+
+
+# for unquoting and unquote-splicing we can use !! and !!! respectively
+# !! for single variables (like common_col in this example) and !!! for vectors (lists)
+poverty_rate_subset <- poverty_rate %>%
+  select(!!common_col, !!!totalpop_determined, !!!numbelowpoverty)
+
+# {{}} will also extract a stored variable name 
+education_subset <- education %>%
+  select({{common_col}}, {{popover25}}, {{numover25bachelors}})
+
+
+# using functions to select columns that match a pattern
+# selecting columns that start with S1501_C01_006 - will select both the columns S1501_C01_006E and S1501_C01_006M
+education_subset_namea <- education %>% 
+  select(starts_with('S1501_C01_006'))
+
+# does this same thing as the function above, but just using the syntax ^, which means start of the string
+# the matches functions allows you can uses regular expressions
+education_subset_nameb <- education %>% 
+  select(matches('^S1501_C01_006'))
+
+# similarly ends_with and matches('string$') do the same thing
+```
+
+```{r}
+
+# using enquo, !!, and {{}} with functions 
+
+# here we are using enquo to capture a bare column name (not quoted)
+# it will convert the bare column names into expressions which we then use !! to understand
+select_by_column <- function(df, column_var) {
+  df %>% select(!!enquo(column_var))
+}
+
+# here were are just using !! because for this function we will pass a quoted column name
+# and !! unquotes it 
+select_by_column_name <- function(df, column_name) {
+  df %>% select(!!column_name)
+}
+
+# here we are using {{}} which can do the same thing as enquo
+# it can handle quoted and unquoted expressions and is more concise
+select_by_column_all <- function(df, col) {
+  df %>% select({{col}})
+}
+
+# for select_by_column using enquo we can pass the column name as a symbol (not as a quoted string) and it will evaluate it
+education_subset_test1 <- select_by_column(education, NAME)
+# for select_by_column_name we pass the column name as a quoted string, which !! unquotes
+education_subset_test2a <- select_by_column_name(education, "NAME")
+# or we can pass it as a variable of a quoted string
+col_name <- "NAME"
+education_subset_test2b <- select_by_column_name(education, col_name)
+# for select_by_column_all we use {{}} which can handle many different cases
+education_subset_test3a <- select_by_column_all(education, NAME)
+education_subset_test3b <- select_by_column_all(education, "NAME")
+education_subset_test3c <- select_by_column_all(education, c(NAME, S1501_C01_006E))
+education_subset_test3d <- select_by_column_all(education, numover25bachelors)
+
+```
+
+```{r}
+# using the walrus operator :=
+# this is used for creating or renaming columns dynamically
+
+bachelors_rate_col <- paste0(numover25bachelors[1], "_rate")
+  
+# Using := for dynamic column creation
+# I use !! to unquote the column name
+# and := to create a column of the name (instead of the name 'bachelors_rate_col')
+# I also need to use !!sym() for the calculation because:
+# When working with dplyr operations on columns, we need symbols not strings (vs select works with strings or variables)
+# Using just !! would unquote to: "S1501_C01_015E" (still a string)
+# so dplyr would look for a column literally named "S1501_C01_015E" (with quotes)
+# using both !!sym(numover25bachelors[1])  
+# First converts "S1501_C01_015E" to a symbol, then unquotes to: S1501_C01_015E (now a symbol)
+# so that dplyr looks for a column named S1501_C01_015E (no quotes)
+# We are using sym() rather than enquo() because we are passing a string not a bare column name
+
+education_ratio_a <- education %>%
+  # select relevant columns using same process as above
+  select({{common_col}}, {{popover25}}, {{numover25bachelors}}) %>%
+  mutate(
+    # Create bachelor's degree percentage
+    !!bachelors_rate_col := (as.numeric(!!sym(numover25bachelors[1])) / as.numeric(!!sym(popover25[1]))) * 100)
+
+
+# example of not using !! and :=
+# here the column will be named bachelors_rate_col instead of "S1501_C01_015E_rate"
+education_ratio_b <- education %>%
+ select({{common_col}}, {{popover25}}, {{numover25bachelors}}) %>%
+  mutate(
+    bachelors_rate_col := (as.numeric(!!sym(numover25bachelors[1])) / as.numeric(!!sym(popover25[1]))) * 100)
+
+# without :=
+# here the column will be named bachelors_rate_col instead of "S1501_C01_015E_rate"
+education_ratio_c <- education %>%
+ select({{common_col}}, {{popover25}}, {{numover25bachelors}}) %>%
+  mutate(
+    # Create bachelor's degree percentage
+   bachelors_rate_col = (as.numeric(!!sym(numover25bachelors[1])) / as.numeric(!!sym(popover25[1]))) * 100)
+
+```
+
+# Table Joins
+
+```{r}
+
+# join the two tables
+# full join includes all rows from each dataframe, even if there isn't a match in the other df
+# we are joining on the column NAME (could also join on multiple columns or columns of differing names)
+# for example if in education_subset it was named County and in poverty_rate_subset it was NAME
+# then we would use by = c('County' = 'NAME') 
+acs_combined <- full_join(education_subset, poverty_rate_subset, by = 'NAME')
+
+
+# Example of joining the tables if the column you are joining on differs in name between the two tables
+# I am creating an example table where I changed the county name column from NAME to County
+ex_education <- education_subset %>%
+  rename(County = NAME)
+
+# now joining that new table with the previous one 
+# use the by = c('County' = 'NAME') to specify that in the first table the column
+# is named County and in the second table the column is named NAME
+ex_acs_combined <- full_join(ex_education, poverty_rate_subset, by = c('County' = 'NAME'))
+
+```
+
+# Filtering Data
+
+We can use filter to subset our data based on a condition
+
+```{r}
+
+# filter to just WA
+acs_combined_WA <- acs_combined %>%
+  # I am using str_detect which is a tidyverse function for string matching
+  # it returns TRUE/FALSE for whether each input matches, aka contains the substring or pattern, passed as input
+  # so that we filter to all rows in the table with Washington in the NAME column
+  filter(str_detect(NAME, ", Washington"))
+
+```
+
+# Transforming Data
+
+## Mutate Across
+
+Transform the data across a set of columns 
+
+```{r}
+# mutate across - used to transform across a set of columns
+# converting all columns across this range of columns to numeric
+acs_combined_WA <- acs_combined_WA %>%
+  mutate(across(S1501_C01_006E:S1701_C02_001M, as.numeric))
+
+# perform the same mutate across those columns now replacing values that are less than 0 with NA
+# the function replace() takes in the 3 arguments: a vector, the index vector (which ones to replace, can be a condition/expression), and the value to replace it with
+# the different components of ~replace(., .<0, NA) mean:
+# ~ means do this to each column
+# . means the current column we're working on
+# .<0 means for the current column all values less than 0
+# NA - the input were a replacing with, which indicates missing values
+acs_combined_WA <- acs_combined_WA %>%
+  mutate(across(S1501_C01_006E:S1701_C02_001M,  ~replace(., .<0, NA)))
+
+```
+
+## Mutate - string and value transformation 
+```{r}
+# str_replace is another tidyverse function for working with strings
+# it takes in 3 inputs, the input vector (or column), the pattern that we are matching and replacing, and what we should replace it with
+# in this case for the column NAME, we are replacing all text including and following a comma ( . means any symbol and * means any number of those symbols, so it will replace all text following a , ) and removing it (replacing with the empty string) - so this will get rid of ', Washington' or anything following , so we just have the county name
+# then we calculate rates and the upper and lower confidence intervals 
+acs_combined_WA <- acs_combined_WA %>%
+  mutate(County = str_replace(NAME, ",.*", ""),
+         percent_bachelors_25_plus = S1501_C01_015E/S1501_C01_006E,
+         pb25_ucl = (S1501_C01_015E + S1501_C01_015M)/S1501_C01_006E,
+        pb25_lcl = (S1501_C01_015E - S1501_C01_015M)/S1501_C01_006E)
+```
+
+# Select and Visualize Data
+
+```{r}
+
+
+# visualizing data using ggplot - creating a bar plot of the percentage of people over 25
+# with a bachelors degree and confidence intervals per county
+# pass in the table acs_combined_WA
+acs_WA_plot <- acs_combined_WA %>%
+  # on the x-axis is the County and on the y-axis is the percentage of people with a bachelors degree
+    ggplot(aes(County, percent_bachelors_25_plus)) +
+  # set plot type to column (or bar plot) - geom_col is equivalent to geom_bar(stat = 'identity')
+    geom_col() +
+  # add lines for the margin of error on each value (using the columns we created above) and set some of the aesthetics for those lines
+    geom_errorbar( aes(x=County, ymin=pb25_lcl, ymax=pb25_ucl), width=0.25, colour="red", alpha=0.9, size=.8) +
+    # set theme to a cleaner visual
+    theme_bw() +
+    # add title to plot
+    ggtitle("Percent of People 25+ with a Bachelors Degree or Higher") +
+    # change the y label to be more concise
+    ylab("Percent") +
+    # rotate axis text so it is easier to visualize
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+# View the plot
+acs_WA_plot
+
+# saving the plot to a file
+# I am saving it to the folder above the folder that this script is in, you can also change it
+# and I am naming the final plot image example_plot
+base_folder <- dirname(dirname(rstudioapi::getSourceEditorContext()$path))
+ggsave(file.path(base_folder, "example_plot.png"), acs_WA_plot)
+```
+
+# Dates
+
+```{r}
+# adding the current date to the table to mark when it was accessed
+# using the lubridate package which has lots of functions for working with dates
+acs_combined_WA <- acs_combined_WA %>%
+  mutate(date_accessed = lubridate::today())
+
+
+```
+
+
+# View 
+
+```{r}
+
+# Viewing the first 20 rows of the table
+head(acs_combined_WA, n = 20)
+
+
+```

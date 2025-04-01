@@ -1,0 +1,339 @@
+---
+title: "Intermediate_R_week2"
+author: "Allie Warren"
+date: "2024-10-04"
+output: html_document
+---
+
+Data Manipulation and Visualization
+
+Notes:
+
+This notebook covers some of the material from course 2 of the Intermediate R datacamp track
+It also includes some info that isn't covered in the course, including some functions I recommend.
+
+- This notebook uses the Household Pulse Survey data
+  - Data source: https://data.cdc.gov/NCHS/Indicators-of-Anxiety-or-Depression-Based-on-Repor/8pt5-q6wp/about_data
+
+- Notes: the default theme for ggplot plots is not great, so I usually set an alternate theme
+  - This is also an interesting resource for creating better visualizations: https://bbc.github.io/rcookbook/ 
+
+# Installing/Loading Packages Using Conditional Logic
+This code shows how to load and install packages and gives some examples of how to use conditional logic.
+The p_load function from the pacman package also serves a similar purpose - it will load a package, or if it is not installed, it will install it
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# conditionals for loading packages
+# This code tries to load the package using require(), and if it is not installed then installs it
+# require() is like library(), except instead of returning an error if the package
+# is not installed, it will return FALSE, so we can use it in this conditional statement
+if(require(tidyverse)){
+    print("tidyverse is loaded correctly")
+} else {
+    print("trying to install tidyverse")
+    install.packages("tidyverse")
+    # check again and load the package
+    if(require(tidyverse)){
+        print("tidyverse installed and loaded")
+    } else {
+      # we were unable to install the package needed for the script,
+      # so we stop the rest of the script from running
+        stop("could not install tidyverse")
+    }
+}
+
+# We do the same with the remaining packages:
+# trying loading the package, if we don't already have it then install it
+if(require(fs)){
+    print("fs is loaded correctly")
+} else {
+    print("trying to install fs")
+    install.packages("fs")
+    if(require(fs)){
+        print("fs installed and loaded")
+    } else {
+        stop("could not install fs")
+    }
+}
+
+# trying loading the package, if we don't already have it then install it
+if(require(lubridate)){
+    print("lubridate is loaded correctly")
+} else {
+    print("trying to install lubridate")
+    install.packages("lubridate")
+    if(require(lubridate)){
+        print("lubridate installed and loaded")
+    } else {
+        stop("could not install lubridate")
+    }
+}
+```
+
+
+# Load Data
+
+Conditional logic to check if the file exists
+
+
+```{r}
+# for the base file path I am getting the filepath to the folder of the folder that this script is saved in
+# then adding the folder data to the file path, as the data files for this repo are stored there
+base_path <- file.path(dirname(dirname(rstudioapi::getSourceEditorContext()$path)), "data")
+file_name <- "Indicators_of_Anxiety_or_Depression_Based_on_Reported_Frequency_of_Symptoms_During_Last_7_Days_20241004.csv"
+
+# file.path() is used to create file paths, it will add the '/' between the different inputs
+# check if file exists, if so read and view the first few rows of the table
+if(file.exists(file.path(base_path, file_name))) {
+  hps_anxdep <- read_csv(file.path(base_path, file_name))
+  head(hps_anxdep)
+# otherwise print a message and display the files in the folder
+} else {
+  print('File is Missing. Files within this folder are:')
+  print(fs::dir_ls(base_path, type = 'file'))
+}
+
+```
+
+# Column Data Types Using lapply
+
+lapply returns a list of the same length as the input, each of element is the result of applying the input function
+to the corresponding element of the input
+```{r}
+
+
+# Using lapply to get the types for each column in the data
+# For each column of the input data we are applying a function,
+# in this case the function class
+# It returns a list, with the column names as the names of the list and the data type of that column in each element
+column_types <- lapply(hps_anxdep, class)
+
+print(column_types)
+
+# example printing the type for the column Indicator
+print(column_types$Indicator)
+# can also access items in the list using the index - this return a list of the column name and the class
+print(column_types[1])
+# to access just the first item, use this syntax
+print(column_types[[1]])
+# can also collapse the list to a vector
+unlisted_column_types <- unlist(column_types)
+unlisted_column_types
+
+
+```
+
+
+# Formatting Dates
+
+The lubridate package has a lot of useful functions for formatting, manipulating, or extracting data from dates, 
+we will use the parse_date_time function to standardize the format of the dates
+
+```{r}
+
+# format dates of multiple possible formats and standardize all to a Year-month-day format
+# %m is month, %d is day, and %Y is Year (in a 4 digit format), %y is year (in a 2 digit format)
+# with the parameter 'orders' I set the possible formats the date could appear in in the data, it checks the different
+# formats in the order given and assumes it is the first one it matches, then will convert that date to a Year-month-day format
+# it will convert to NA any dates that do not match any of the given formats
+
+# for this I am checking for dates of format: "%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%m/%d/%y"
+# examples of each of these respectively would be: 01/30/2024, 2024-01-30, 01-30-2024, 01/30/24
+hps_anxdep <- hps_anxdep %>%
+  mutate(formatted_date = lubridate::ymd(lubridate::parse_date_time(`Time Period Start Date`, orders = c("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%m/%d/%y"))))
+
+head(hps_anxdep, n = 100)
+
+```
+
+# Loops
+
+Example of using a loop, and conditional logic, to filter the data and create plots for each location within the given list
+
+```{r}
+
+# loop through each location in the list 'western_states', and if there is data plot 
+western_states <- c("Washington", "Oregon", "California")
+for(location in western_states) {
+  # filter data to the current location
+   cur_hps <- filter(hps_anxdep, State == location)
+   
+   # only create the plot if there is data for that location
+   # we are checking that there are at least some non NA values greater than 0
+   # in the column Value
+   if(sum(cur_hps$Value, na.rm = T) > 0) {
+     # create scatter plot of the Values by date, coloring by indicator
+     hps_plot <- cur_hps %>%
+        ggplot(aes(formatted_date, Value, color = Indicator)) +
+        geom_point() +
+        theme_bw() + # adjust the theme to a cleaner form
+        xlab('Date') + ylab('Percent') + # change the axis labels and title 
+        ggtitle(paste(location, 'Anxiety and Depression Rates')) +
+        theme(legend.position = 'bottom') + # move the legend to the bottom, instead of the right side
+        guides(color=guide_legend(nrow=2,byrow=TRUE)) # adjust the legend text to be on two lines, so that the text doesn't run off the edge of the plot
+     
+     # need to specify print(plot) with a loop so that all the plots are displayed
+     print(hps_plot)
+   }
+  
+}
+
+```
+
+# Cleaning Strings
+
+The stringr package has a lot of functions that are useful for cleaning, matching, or extracting text from strings
+We will use functions from this package to remove characters and additional white space from a string 
+```{r}
+# separate out the lower and upper quartile range
+# the Quartile Range column contains a string of format like: 10.1 - 13.1
+# we want to separate out the lower and upper range into their own columns and make them numeric
+
+# str_replace is similar to gsub
+# .* means any character and 0 or more repetitions of it,
+# therefore this code will remove (replace with empty string) any characters either following (in the first case) or preceding (in the second case) a dash 
+# str_squish removes leading and trailing white space
+hps_anxdep <- hps_anxdep %>%
+                         # get rid of dash and all characters following it, and remove additional white space, then convert to numeric
+  mutate(lower_quartile = as.numeric(str_squish(str_replace(`Quartile Range`, "-.*", ""))),
+                        # get rid of all characters preceding the dash and the dash, and remove additional white space, then convert to numeric
+         upper_quartile = as.numeric(str_squish(str_replace(`Quartile Range`, ".*-", ""))))
+
+
+# plot the results as a scatter plot with dashed lines showing the quartile range
+# filter to one indicator and WA data
+filter(hps_anxdep, Indicator == 'Symptoms of Depressive Disorder' & State == 'Washington') %>%
+  ggplot(aes(formatted_date, Value)) +
+  # add dashed lines showing the interquartile ranges
+  geom_errorbar( aes(x=formatted_date, ymin=lower_quartile, ymax=upper_quartile), width=0.25, colour="skyblue3", alpha=0.9, linewidth=.8, linetype = 'dashed') +
+  geom_point(color = 'black', size = 2.5) +
+  theme_minimal() + 
+  ggtitle('Washington Symptoms of Depressive Disorder') +
+  xlab('Date') + ylab('Percent (with quartile range)')
+```
+
+
+# While Loops and Functions
+
+This shows an example of how to use functions and while loops
+In this example I am trying to find a set of colors for plotting that will be distinct from each other
+It randomly generates a color palette and checks how distinct all the colors are from each other, and
+if the palette does not meet the minimal distinctness I set then it generates a new color palette and checks again 
+
+```{r}
+# While loop example: Generating a Contrasting Color Palette 
+# goal is to find a set of colors for each category that we are plotting that will be maximally contrastive 
+
+# Function to calculate Euclidean distance in Lab color space between two Hex color codes
+# I use this to measure how different all the colors are (more distant colors are more distinct, less 
+# distant colors are more similar)
+calculate_color_difference <- function(color1, color2) {
+  # get Hex color coordinates for each pair of colors
+    lab1 <- as(colorspace::hex2RGB(color1), "LAB")@coords
+    lab2 <- as(colorspace::hex2RGB(color2), "LAB")@coords
+    # calculate the distance between the two colors
+    color_distance <- sqrt(sum((lab1 - lab2)^2))
+}
+
+# Function to calculate the distance between every pair of colors in the palette
+# and return the min distance between any pair
+min_difference <- function(colors) {
+    if (length(colors) < 2) {
+      return(Inf)
+    } 
+    # combn works similar to the apply function, but instead of applying a function to each item in a list or dataframe
+    # it applies a function to each pair of inputs in the list 
+    # in this case for each pair of colors in the list it applies a function calculating the distance between the two colors
+    diffs <- combn(colors, 2, function(pair) calculate_color_difference(pair[1], pair[2]))
+    # return the minimum distance between any pair of colors
+    return(min(diffs))
+}
+
+
+# randomly generate color palettes until we find a color palette that meets our min contrastive 
+# metric or we have generated more than a certain number of palettes
+generate_contrastive_palette <- function(n_colors, min_contrast = 30, max_iterations = 1000) {
+  # load list of colors
+  color_list <- gplots::col2hex(grDevices::colors())
+  # check that the number of categories (number of colors requested) is less than the number of available colors
+  if(length(color_list) < n_colors) {
+    print("Error: more categories than available colors")
+  }
+  # randomly select a set of colors of the length that is specified
+  palette <- sample(color_list, n_colors)
+  iteration <- 0
+  # loop until the palette meets the min contrast requirement
+  # or it has generated more than max_iterations palettes (this prevents the loop from going infinitely)
+  # infinite loops is something you want to watch out for with while loops
+  while (min_difference(palette) < min_contrast & iteration < max_iterations) {
+    palette <- sample(color_list, n_colors)
+    iteration <- iteration + 1
+  }
+  print(paste(iteration, "iterations to generate the palette"))
+  
+  return(palette)
+}
+
+# Usage:
+# filter to data we want to plot
+anx_age_data <- filter(hps_anxdep, State == 'United States' & Indicator == 'Symptoms of Anxiety Disorder' & Group == 'By Age' & !is.na(Value))
+# generate color palette for the number of groups in the data
+contrasting_palette <- generate_contrastive_palette(n_distinct(anx_age_data$Subgroup), min_contrast = 40, max_iterations = 750)
+
+# plot data using the generated color palette
+anx_age_data %>% 
+  ggplot(aes(formatted_date, Value, color = Subgroup)) + 
+  geom_point() + geom_line(alpha = 0.6) +
+  theme_bw() +
+  xlab("Date") + ylab("Percent") + ggtitle('Experiencing Symptoms of Anxiety') +
+  # use the color palette we defined above, instead of the default colors
+  scale_color_manual(values=contrasting_palette)
+
+```
+
+# Summary Statistics
+Calculating summary stats using apply or using summarise()
+```{r}
+
+# Using apply to calculate mean, median, and sd for the Value and confidence interval columns
+# We subset the data to just those columns, then for each column in the reduced data we apply the specified functions
+# The second argument of apply specifies whether the function is applied to columns or row - 2 specifies columns, 1 would specify rows
+# we apply the function given here to calculate mean, median, and sd
+# this returns a list of lists. It is a list of the names of the columns with each list containing a list of mean, median, and sd
+column_stats <- apply(hps_anxdep[, c("Value", "Low CI", "High CI")], 
+                      2, 
+                      function(x) list(
+                        mean = mean(x, na.rm = T),
+                        median = median(x, na.rm = T),
+                        sd = sd(x, na.rm = T)
+                      ))
+
+print(column_stats)
+
+# Creating summary stats for each indicator and demographics group across all weeks in the data
+# We group the data on Indicator and Subgroup
+# Then use summarise() and calculate the mean, minimum value, maximum value, median, and standard deviation of the Value column
+# For each function we set na.rm=T so that it removes NAs in the data and calculates the values on the remaining data
+# without this parameter set to TRUE, if there are any NAs in the data, the function will return NA
+hps_anxdep %>% group_by(Indicator, Subgroup) %>%
+  summarise(mean = mean(Value, na.rm = T),
+            min = min(Value, na.rm = T),
+            max = max(Value, na.rm = T),
+            median = median(Value, na.rm = T),
+            sd = sd(Value, na.rm=T))
+
+
+# Using sapply:
+# This calculates the confidence interval widths for each row of the dataframe
+# in the format here it functions like a for loop
+# this creates a vector (instead of a list, like lapply would) of length equal to the number of rows in the table
+confidence_widths <- sapply(1:nrow(hps_anxdep), function(i) {
+  hps_anxdep$`High CI`[i] - hps_anxdep$`Low CI`[i]
+})
+print("Confidence Interval Width Summary Stats:")
+print(summary(confidence_widths))
+
+
+```

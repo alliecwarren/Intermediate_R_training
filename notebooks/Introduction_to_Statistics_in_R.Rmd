@@ -1,0 +1,415 @@
+---
+title: "Introduction_to_Statistics_in_R"
+author: "Allie Warren"
+date: "2025-01-09"
+output: html_document
+---
+
+This notebook covers some of the topics in the statistics course, such as
+- examining the distribution of your data
+- calculating summary stats, such as mean, median, mode, variance, standard deviation, skew, etc.
+- calculating correlations between different types of variables
+- testing for normality
+- t tests
+
+Data: 
+- Survey data on happiness/satisfication in Somerville, MA across a handful of categories from every other year 2011-2023
+  - source: https://data.somervillema.gov/Health-Wellbeing/Somerville-Happiness-Survey-Responses/pfjr-vzaw/about_data
+- Health Indicators for neighborhoods in Chicago
+  - source: https://data.cityofchicago.org/Health-Human-Services/Public-Health-Statistics-Selected-public-health-in/iqnk-2tcu/about_data
+  - includes:
+    - birth rate per 1,000 person, general fertility rate per 1000 females 15-44, low birth weights as percent of live births, prenatal care as percent of females delivering a live birth, preterm births as percent of live births, teen birth rate per 1000 females 15-19, infant mortality rate per 1000 live births, childhood lead poisoning per 100, childhood blood lead level per 1000 children 0-6
+    - cancer, colorectal cancer, diabetes-related, firearm-related, assault (homicide), lung cancer, stroke, prostate cancer in males, gonorrhea in females, gonorrhea in males, breast cancer in females, and tuberculosis related mortality per 100,000 persons (age adjusted)
+    - percent of households below poverty rate , crowded housing measured as percent of occupied  housing, dependency as percent of people <16 or >64, no high school diploma as percent of persons 25+, unemployment as percent of person 16+, and per capita income
+  
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(effectsize)
+library(rcompanion)
+library(polycor)
+library(naniar)
+```
+
+# Read in Data
+
+```{r}
+# read in data
+# for the base file path I am getting the file path to the folder of the folder that this script is saved in
+# then adding the folder data to the file path, as the data files for this repo are stored there
+base_path <- file.path(dirname(dirname(rstudioapi::getSourceEditorContext()$path)), "data")
+file_name <- 'Somerville_Happiness_Survey_Responses_20250109.csv'
+happiness_survey <- read_csv(file.path(base_path, file_name))
+# data summary
+head(happiness_survey)
+print(paste(nrow(happiness_survey), "rows and", ncol(happiness_survey), "columns"))
+
+# read in health indicators data
+health_indicators <- read_csv(file.path(base_path, "Public_Health_Statistics_-_Selected_public_health_indicators_by_Chicago_community_area_-_Historical_20250110.csv"))
+str(health_indicators)
+# convert columns to numeric to ensure all are numeric for later calculations
+health_indicators <- health_indicators %>%
+  mutate(across(`Birth Rate`:Unemployment, as.numeric))
+
+head(health_indicators)
+```
+
+# Missing data
+First look at missing values in the data (as show in the previous course) so we better understand the data we are working with
+```{r}
+
+# missingness in the Chicago health indicators data
+gg_miss_var(health_indicators) + ggtitle('Chicago Health Indicator Data Completeness')
+
+
+# missingness in the MA happiness survey
+# there are many columns in the data, for each question on satisfaction/happiness the result is 
+# given in a numeric column (1-5 scale) and label column (very unsatisfied/happy to very satisfied/happy)
+# we will just look at the numeric version of each of those columns when plotting missingess
+
+# look at missingness in data variables
+happiness_sub <- happiness_survey %>% select(-ends_with('label'))
+
+# splitting into 2 plots for easier visualization
+gg_miss_var(happiness_sub[,1:49]) + ggtitle('MA Happiness Survey Variable Completeness Part 1')
+gg_miss_var(happiness_sub[,50:ncol(happiness_sub)]) + ggtitle('MA Happiness Survey Variable Completeness\nPart 2')
+
+# some questions are specific to later years (COVID-19 specific), look at missing data in just 2023 data
+happiness_2023 <- filter(happiness_survey, Year == 2023)
+print(paste(nrow(happiness_2023), "responses from 2023"))
+# splitting into 2 plots and non label variables for easier visualization
+gg_miss_var(happiness_2023[,1:49] %>% select(-ends_with('label'))) + ggtitle('MA Happiness Survey 2023 Variable Completeness Part 1')
+gg_miss_var(happiness_2023[,50:ncol(happiness_2023)] %>% select(-ends_with('label'))) + ggtitle('MA Happiness Survey 2023\nVariable Completeness Part 2')
+
+
+
+```
+# Summary Statistics
+Calculate summary statistics, such as mean, median, mode, variance, standard deviation, skew, etc.
+and visualize the data
+```{r}
+# function for calculating a variety of Summary Statistics
+# inputs:
+# data: dataframe
+# variable: (str) column in the data to calculate stats
+summary_stats <- function(data, variable) {
+  stats <- list(
+    mean = mean(data[[variable]]),
+    median = median(data[[variable]]),
+    mode = as.numeric(names(sort(table(data[[variable]]), decreasing = TRUE)[1])),
+    sd = sd(data[[variable]]),
+    var = var(data[[variable]]),
+    skew = (mean(data[[variable]]) - median(data[[variable]])) / sd(data[[variable]]),
+    q1 = quantile(data[[variable]], 0.25),
+    q3 = quantile(data[[variable]], 0.75)
+  )
+  
+  stats$iqr <- stats$q3 - stats$q1
+  stats$outliers <- data[[variable]][data[[variable]] < (stats$q1 - 1.5 * stats$iqr) |
+                                       data[[variable]] > (stats$q3 + 1.5 * stats$iqr)]
+  
+  return(stats)
+}
+
+# Calculating summary stats for and visualizing the breast cancer rate per 100,000 in females
+bc_stats <- summary_stats(health_indicators, "Breast cancer in females")
+
+
+print("Summary Statistics for Breast Cancer Rates:")
+print(bc_stats)
+
+col_name <- "Breast cancer in females"
+ggplot(health_indicators, aes(x = .data[[col_name]])) +
+    geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+    labs(title = paste0("Distribution of ", col_name, " Mortality\nper 100,000 across Chicago Neighborhoods"),
+         x = paste0(gsub("`", "", col_name), ' Mortality Rate per 100k')) +
+    theme_minimal()
+  
+
+ggplot(health_indicators, aes( y=.data[[col_name]])) + 
+    geom_boxplot(outlier.colour="red", outlier.shape=8,
+                 outlier.size=4)  +
+    labs(title = paste0(col_name, " mortality per 100,000")) +
+    theme_minimal()
+  
+```
+
+# Pearson Correlation
+Examining correlations between different health indicators 
+```{r}
+# calculating pearson correlation between mortality or disease rate per 100k
+# only using records w/out missing data
+cor_results <- cor(health_indicators[c("Stroke (Cerebrovascular Disease)", "Firearm-related", "Cancer (All Sites)", "Diabetes-related", "Gonorrhea in Females", "Gonorrhea in Males")], use = "pairwise.complete.obs")
+
+# convert correlation results from matrix to long format 
+# for visualization purposes
+cor_results_long <- cor_results %>% 
+  # convert to tibble
+  as_tibble() %>%
+  # add a column with the row names
+  mutate(Var1 = rownames(cor_results)) %>%
+  # convert to long format
+  pivot_longer(-Var1, names_to = "Var2", values_to = "correlation") 
+
+# create heatmap format plot of the correlation
+ggplot(cor_results_long, aes(Var1, Var2)) +
+  geom_tile(aes(fill = correlation)) +
+  geom_text(aes(label = round(correlation, 2))) +
+  scale_fill_gradientn(colours = c("darkred", "orange", "yellow", "white")) +
+  theme_minimal() +
+  xlab("") + ylab("") + ggtitle('Chicago Neighborhood Health Indicator Correlations') +
+  # rotate axis text so it is easier to visualize
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+
+# visualizing correlation between cancer and diabetes rates per 100,000 in each neighborhood
+ggplot(health_indicators, aes(`Cancer (All Sites)`, `Diabetes-related`)) +
+  geom_point() +
+  geom_smooth(method= 'lm') +
+  theme_minimal() +
+  ggtitle('Mortality Rates per 100,000 in Chicago Neighborhoods')
+
+```
+
+# Correlation between two Ordinal Variables
+
+```{r}
+
+# relationship between Life Satisfaction and Happiness
+# convert life satisfaction to factor with specified labels for visualization purposes 
+happiness_2023$Life.Satisfaction.5pt.label <- factor(happiness_2023$Life.Satisfaction.5pt.label, levels = c( "Very Unsatisfied","Unsatisfied","Not Sure",   "Neutral","Satisfied", "Very Satisfied", NA))
+
+ggplot(data = happiness_2023, 
+       aes(Life.Satisfaction.5pt.label, Happiness.5pt.num,
+           fill = Life.Satisfaction.5pt.label)) +
+  geom_violin() +
+  theme_bw() +
+  ylab('Happiness (very unhappy to very happy)') +
+  xlab('Life Satisfaction') +
+  ggtitle('Somerville 2023 Survey') +
+  theme(legend.position = 'none')
+
+# polychoric correlation - used for correlation between ordinal variables
+# -1 = perfect negative correlation, 0 = no correlation, 1 = perfect positive correlation
+# more info on polychoric correlation: https://www.r-bloggers.com/2021/02/how-does-polychoric-correlation-work-aka-ordinal-to-ordinal-correlation/#google_vignette
+polychor_res <- polychor(happiness_2023$Life.Satisfaction.5pt.num, happiness_2023$Happiness.5pt.num)
+print(paste('Polychoric Correlation:', 
+            round(polychor_res, 3))) 
+
+
+# kendall correlation
+kendall_cor <- cor(happiness_2023$Life.Satisfaction.5pt.num, happiness_2023$Happiness.5pt.num, method = 'kendall', use = "pairwise.complete.obs")
+print(paste('Kendall Correlation:', 
+            round(kendall_cor, 3)))
+
+```
+
+
+# Bootstrapping
+Using bootstrapping to estimate a 95% confidence interval on the Kendall correlation between life satisfaction and happiness in the survey data
+```{r}
+
+# Bootstrap function
+bootstrap_kendall <- function(data, n_boot = 1000) {
+  boot_cors <- numeric(n_boot)
+  n <- nrow(data)
+  
+  for(i in 1:n_boot) {
+    # Sample with replacement
+    boot_indices <- sample(1:n, n, replace = TRUE)
+    boot_data <- data[boot_indices, ]
+    
+    # Calculate correlation for bootstrap sample
+    boot_cors[i] <- cor(boot_data$Life.Satisfaction.5pt.num, boot_data$Happiness.5pt.num, method = "kendall", use = "pairwise.complete.obs")
+  }
+  
+  return(boot_cors)
+}
+
+# Run bootstrap
+boot_results <- data.frame(cor = bootstrap_kendall(happiness_2023))
+median_cor <- quantile(boot_results$cor, c(0.5))
+ci <- quantile(boot_results$cor, c(0.025, 0.975))
+# plot results of bootstrapping
+ggplot(boot_results, aes(cor)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+  geom_vline(xintercept = median_cor, color = "red", linetype = "dashed", size = 1.1) +
+  geom_vline(xintercept = ci, color = "blue", linetype = "dotted", size = 1.1) +
+  xlab('Kendall Correlation') +
+  theme_minimal() +
+  ggtitle('Bootstrapped Calculation of Kendall Correlation\nBetween Life Satisfication and Happiness (2023)')
+ 
+
+```
+
+
+# Correlation between an Ordinal and Binary Variable
+Using Rank-Biserial Correlation
+formula for rank-biserial correlation: r_rb = 2 * (Y_1 – Y_0) / n,
+where n is the number of data pairs, Y_0 and Y_1 are the Y score means for data pairs with x=0 or x=1, respectively
+Y scores are ranks
+  - returns values from -1 to 1
+
+```{r}
+# compare life satisfaction between those w/ and w/out children
+ggplot(data = happiness_2023, 
+       aes(factor(Children.YN, levels = c(1, 0)),
+           Life.Satisfaction.5pt.num,
+           fill = as.factor(Children.YN))) +
+  geom_violin() +
+  theme_bw() +
+  xlab('Children (yes or no)') +
+  ylab('Life Satisfaction') +
+  ggtitle('Somerville 2023 Survey') +
+  theme(legend.position = 'none')
+
+# filter to data without missing input 
+# (could skew our results)
+comp_hap_2023 <- filter(happiness_2023, !is.na(Life.Satisfaction.5pt.num) & !is.na(Children.YN))
+print(paste(nrow(comp_hap_2023), "data points remaining, removed", nrow(happiness_2023) - nrow(comp_hap_2023), "records"))
+
+# computing rank biserial (2 ways) - for computing correlation between a binary and ordinal variable
+rank_biserial(Life.Satisfaction.5pt.num ~ Children.YN,
+              data = comp_hap_2023)
+print("*********************************")
+wilcoxonRG(x = comp_hap_2023$Life.Satisfaction.5pt.num, g = comp_hap_2023$Children.YN, verbose=TRUE)
+
+
+```
+
+# Testing for Normality 
+
+We can visually look at the data and use a shapiro test to test whether our data is normal
+A Shapiro-Wilk test has a null hypothesis that the sample has been generated from a normal distribution. If the p-value is low, we can reject the null hypothesis and hypothesize that the sample has not been generated from a normal distribution. One caveat, it does not work well with large datasets.
+For visualizing the data we can use a histogram or create a Q-Q (quantile-quantile) plot. In a Q-Q plot if the points lie on a straight diagonal line it is more likely that the data is normally distributed, while if it deviates more from the line it is less likely that the data is normally distributed.
+
+```{r}
+
+# Shapiro test - Normal distribution test for diabetes-related mortality per 1000,000 person and for per capita income
+print('Shapiro Test for Diabetes-related Mortality Across Communities')
+shapiro_test_diabetes <- shapiro.test(health_indicators$`Diabetes-related`)
+print( shapiro_test_diabetes)
+ifelse(shapiro_test_diabetes$p.value < 0.05, "The p-value is less 0.05, we can reject the null hypothesis of the normality of this data", "The p-value is greater than 0.05, we can not reject the null hypothesis that this data is sampled from a normal distribution")
+print('Shapiro Test for Per Capita Income Across Communities')
+shapiro_test_income <- shapiro.test(health_indicators$`Per Capita Income`)
+print( shapiro_test_income)
+ifelse(shapiro_test_income$p.value < 0.05, "The p-value is less 0.05, we can reject the null hypothesis of the normality of this data", "The p-value is greater than 0.05, we can not reject the null hypothesis that this data is sampled from a normal distribution")
+
+# comparing to normally distributed data
+health_indicators$rnorm_data <- rnorm(n = nrow(health_indicators), mean = mean(health_indicators$`Diabetes-related`), sd = sd(health_indicators$`Diabetes-related`))
+
+density_cols <- c("Diabetes"="skyblue","Random Norm"="#7e39a3")
+ggplot(health_indicators) + geom_density(aes(`Diabetes-related`, fill = 'Diabetes'), alpha = 0.8) +
+  geom_density(aes(rnorm_data, fill = 'Random Norm'), alpha = 0.5) +
+  scale_fill_manual(name="",values=density_cols) +
+  theme_minimal() + xlab('value')
+
+# normal QQ plot in R
+# can use qqPlot function from the car package
+car::qqPlot(health_indicators$`Diabetes-related`, distribution= 'norm', ylab = 'Diabetes-related Mortality (per 100k)')
+
+# or use ggplot with the stat_qq function
+ggplot(health_indicators, aes(sample=`Per Capita Income`))+
+  stat_qq() +
+  stat_qq_line(color = 'royalblue1') +
+  theme_bw() +
+  ggtitle('QQ Plot for Per Capital Income')
+
+# visualizing distribution of income
+ggplot(health_indicators, aes(x = `Per Capita Income`)) +
+    geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+    labs(title = "Per Capita Income across Neighborhoods",
+         x = "Per Capita Income",
+         y = "Count") +
+    theme_minimal()
+
+```
+
+# T-Tests
+Additional Resources on T-Tests:
+  - https://www.datanovia.com/en/lessons/how-to-do-a-t-test-in-r-calculation-and-reporting/#google_vignette
+  - https://www.statswithr.com/tutorials/performing-t-tests-in-r
+  
+## One-sample T-Test
+
+```{r}
+# Does the rate of prenatal care beginning in the first trimester in Chicago communities
+# differ from the US rate
+
+# first test for normality of data
+shapiro.test(health_indicators$`Prenatal Care Beginning in First Trimester`)
+
+# US rate of getting prenatal care in first trimester
+us_prenatal_care_in_first_trimester = 70.8
+
+# t test
+prenatal_care_t_test = t.test(health_indicators$`Prenatal Care Beginning in First Trimester`, mu = us_prenatal_care_in_first_trimester)
+prenatal_care_t_test
+
+# effect size - calculate Cohen's d
+# if d is >0.8 indicates large effect
+cohens_d(health_indicators$`Prenatal Care Beginning in First Trimester` ~ 1, mu = us_prenatal_care_in_first_trimester)
+
+# Does the rate of general fertility rate per 1000 females in Chicago communities differ from the US rate
+# first test for normality of data
+shapiro.test(health_indicators$`General Fertility Rate`)
+
+# US general fertility rate per 1000 females aged 15-44
+us_fertility_rate = 66.7
+
+# t test
+fertility_t_test = t.test(health_indicators$`General Fertility Rate`, mu = us_fertility_rate)
+fertility_t_test
+```
+
+
+## Two-Sample T-test
+I divided the neighborhoods into two groups, those with an Assault (homicide) rate per 100,000 above 25 and those below
+We can now use a t-test to see whether the cancer rate differs between those two groups of neighborhoods
+(this doesn't take into account confounding factors or show causation)
+```{r}
+# visualizing assault rate
+ggplot(health_indicators, aes(x = `Assault (Homicide)`)) +
+    geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+    geom_vline(xintercept = 25, linetype='dotted', col = '#46738b', size = 1.1) +
+    labs(x = "Assaults",
+         y = "Count") +
+    theme_minimal()
+# visualizing cancer rate
+ggplot(health_indicators, aes(x = `Cancer (All Sites)`)) +
+    geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+    labs(x = "Cancer",
+         y = "Count") +
+    theme_minimal()
+
+# splitting the data into two groups
+health_indicators$high_assaults <- health_indicators$`Assault (Homicide)` > 25
+
+# visualizing cancer rate between the two groups
+ggplot(health_indicators, aes(x = `Cancer (All Sites)`, fill = high_assaults, color =  high_assaults)) +
+    geom_histogram(alpha = 0.6, bins = 40) +
+    labs(x = "Cancer Rate per 100,000",
+         y = "Count",
+         fill = 'Assaults per 100,000 > 25',
+         color = 'Assaults per 100,000 > 25') +
+    theme_minimal()
+
+# visualizing cancer rate between the two groups in a different way
+ggplot(health_indicators, aes(high_assaults, `Cancer (All Sites)`, color =  high_assaults)) +
+    geom_boxplot() +
+    theme_minimal() +
+    xlab('Assault (Homicide) Rate > 50') +
+    theme(legend.position = 'none')
+
+# t test comparing cancer rate in the two groups
+# independent two-sample t-test 
+#   comparing the means of the two groups and whether the differences in means are statistically significant,
+# considering variance w/in each group
+t.test(`Cancer (All Sites)` ~ high_assaults, data = health_indicators)
+
+# effect size
+# for small sample size (~ <50) cohen's d can over-inflate results, can use Hedge's Corrected version of Cohen's d
+cohens_d(`Cancer (All Sites)` ~ high_assaults, data = health_indicators, var.equal = TRUE) 
+```

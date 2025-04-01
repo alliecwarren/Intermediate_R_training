@@ -1,0 +1,496 @@
+---
+title: "Intermediate_R_plotting"
+author: "Allie Warren"
+date: "2024-10-10"
+output: html_document
+---
+
+Plotting In R
+
+Notes:
+
+This notebook covers some of the material from month 4 of the Intermediate R DataCamp track, and some info that isn't covered in the course, on creating different types of plots in R.
+
+Topics covered:
+- creating a scatter plot
+- labeling points w/ ggrepel
+- creating bar plots - rotating axis text, using position_dodge
+- creating a density plot
+- creating a violin plot with jittered points
+- creating a WA state map plot
+- creating alternate color schemes - viridis or custom
+  - R color names: https://r-charts.com/colors/
+  - viridis colors: https://cran.r-project.org/web/packages/viridis/vignettes/intro-to-viridis.html
+  - generating accessible colors: https://venngage.com/tools/accessible-color-palette-generator
+- plotting themes
+  - publication ready themes: https://www.datanovia.com/en/blog/tag/ggpubr/
+
+This notebook uses data on respiratory hospitalizations for WA state (https://doh.wa.gov/data-and-statistical-reports/diseases-and-chronic-conditions/communicable-disease-surveillance-data/respiratory-illness-data-dashboard) and an example of line level data on ebola cases. 
+ 
+# Loading Packages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#This line of code installs the pacman page if you do not have it installed - if you do, it simply loads the package
+if(!require(pacman))install.packages("pacman")
+# then we can use the p_load function to load or, as needed, install packages
+# similar to the conditional statements we used in previous notebooks
+pacman::p_load('tidyverse', 'ggpubr', 'ggrepel', 'readxl', 'viridis', 'ggridges', 'sf')
+
+
+```
+
+
+# Loading Data
+
+Two example datasets
+  - Respiratory hospitalizations and emergency room visits for Washington 
+  - ebola case line level data
+
+```{r}
+
+# for the base file path I am getting the file path to the folder that this script is saved in
+# if you has stored the data in a different folder, then you will need to change the base path here
+base_path <- file.path(dirname(dirname(rstudioapi::getSourceEditorContext()$path)), "data")
+
+# WA state respiratory disease hospitalization rates
+resp_hosp <- read_csv(file.path(base_path, "Respiratory_Disease_RHINO_Downloadable_Data.csv"))
+# data from a paper on ebola cases - has per individual case data
+ebola <- readxl::read_xlsx(file.path(base_path, "Finaldataset F1000.xlsx"))
+
+# View the data
+head(resp_hosp)
+
+head(ebola)
+
+```
+
+
+# Scatter Plot of Hospitalizations over Time
+
+Creating a scatter plots with different point colors, shapes, and sizes per category
+
+```{r}
+# using colors to mark the different respiratory illnesses and shape and size to mark emergency visits vs hospitalizations
+# filter to all demographics and statewide data
+filter(resp_hosp, `Demographic Category` == 'Overall', Location == 'Statewide') %>%
+# plot percent per week, with COVID-19 marked in red, Flu marked in green, and RSV marked in blue
+# and emergency visits denoted with a circle and hospitalizations with a triangle
+ggplot(aes(`Week Start`, `1-Week Percent`, color = `Respiratory Illness Category`, shape = `Care Type`, size= `Care Type`)) +
+  # set slightly different size points for hospitalizations vs emergency visits to further differentiate
+  scale_size_manual(values = c(1.6, 2.3)) +
+  # set opacity to .8 to make it easier to see overlapping points
+  geom_point(alpha = 0.8) +
+  # set theme to minimal to make the plot cleaner
+  theme_minimal() +
+  # rename label for color in the legend to shorten
+  labs(color = 'Illness') +
+  # add title
+  ggtitle('Respiratory Illness Hospitalizations and Emergency Visits')
+
+
+
+```
+# Line Plot
+
+Creating a similar plot as asbove, but as a line plot instead of a scatter plot
+Using different colors to denote illness, and different line types to denote Hospitalizations vs Emergency Visits
+```{r}
+filter(resp_hosp, `Demographic Category` == 'Overall', Location == 'Statewide') %>%
+ggplot(aes(`Week Start`, `1-Week Percent`, color = `Respiratory Illness Category`, linetype = `Care Type`)) +
+  # set plot type to line and set line thickness
+  geom_line(linewidth=1.2) +
+    # change theme to minimal
+  theme_minimal() +
+  # rename label for color in the legend to shorten
+  labs(color = 'Illness') +
+  # add title
+  ggtitle('Respiratory Illness Hospitalizations and Emergency Visits')
+
+
+```
+
+# Scatter Plot with Labels
+
+Show two plots, one using default label positioning, and one using geom_text_repel to position labels. geom_text_repel is a 
+function from the ggrepel package that creates 'repulsive' text labels so that the text labels do not
+overlap each other
+
+```{r}
+
+# filter respiratory data to overall demographics and COVID-19 and week 36 data
+# then we convert the data from long format to wide format so that we have a separate column for hospitalizations and emergency room percentage
+week6_covid_data <- resp_hosp %>% filter(`Demographic Category` == 'Overall', `Respiratory Illness Category` == 'COVID-19', `Week Start` == "2024-09-01") %>%
+  pivot_wider(names_from = `Care Type`,
+    values_from = c(`1-Week Percent`)) 
+
+
+# then we plot hospitalizations vs emergency visits for each health region in the state
+# and add labels to the points denoting the health region (this makes it easier to identify which point represents
+# each region instead of using a legend)
+overlapping_labels <- week6_covid_data%>%
+  ggplot(aes(Hospitalizations, `Emergency Visits`, color = Location)) +
+  geom_point() + 
+  theme_bw() +
+  # remove the legend, as we are labeling the points instead
+  theme(legend.position = 'none') +
+  # add text labels
+  ggplot2::geom_text(aes(x = Hospitalizations, 
+                      y = `Emergency Visits`, 
+                      label = Location)) +
+  # add title
+  ggtitle('COVID-19 1 Week Percent for 2024-09-01 (default label positions)')
+
+overlapping_labels
+
+# using ggepel::geom_text_repel instead of just geom_text to label points so labels don't overlap
+well_labeled <- week6_covid_data %>%
+  ggplot(aes(Hospitalizations, `Emergency Visits`, color = Location)) +
+  geom_point() + 
+  theme_bw() +
+  # remove legend
+  theme(legend.position = 'none') +
+  # use geom_text_repel to label points
+  ggrepel::geom_text_repel(aes(x = Hospitalizations, 
+                      y = `Emergency Visits`, 
+                      label = Location)) +
+  # add title
+  ggtitle('COVID-19 1 Week Percent for 2024-09-01 (with adjusted labels)')
+
+well_labeled
+
+
+```
+
+# Bar Plots - example with Ebola data
+- geom_bar takes in one input and creates bars of height proportional to the number of cases in each group
+- geom_col (or geom_bar(stat = 'identity')) takes x and y inputs and creates bars of height equal to the y value for each group 
+
+```{r}
+# creating a simple bar plot of counts per group
+ebola_simple_bar_plot <- ggplot(ebola) + 
+  geom_bar(aes(`Age categories`)) +
+  theme_bw() +
+  xlab('Age') +
+  ggtitle('Ebola Cases by Age (default)')
+ebola_simple_bar_plot 
+
+# creating the same plot, but using factors to set the order of variables for plotting
+# by default the x-axis will be ordered alphabetically, with may not accurately represent the ordering of our data
+# by making the variable a factor we can add levels and set the ordering of the variables
+ebola <- ebola %>%
+  mutate(Age_Groups = factor(`Age categories`, levels = c('4 and below', '5 to 14 years', '15 to 29 years', '30 to 44 years', '45 to 59 years', '60 and above', NA)))
+
+ebola_ordered_bar_plot <- ggplot(ebola) +
+  geom_bar(aes(Age_Groups)) +
+  theme_bw() +
+  xlab('Age') +
+  ggtitle('Ebola Cases by Age (w/ ordering of x-axis)')
+ebola_ordered_bar_plot
+
+# creating a multi variable bar plot
+ebola_multivar_bar_plot <- ggplot(ebola) +
+  # adding a grouping variable (asthenia weakness) to create a mutli variable bar plot
+  # we add position_dodge() so that the bars are next to each other, instead of stacked
+  geom_bar(aes(Age_Groups, fill = asthenia_weakness), position = position_dodge()) +
+  # using theme from ggpubr for better visualizatin
+  theme_pubclean() +
+  # adjust axis text to be angled so that it fits in display
+  theme(axis.text.x = element_text(angle = 54, hjust=1)) +
+  # label x axis
+  xlab('Age') +
+  # adjust label of th legend
+  labs(fill = 'Symptom of Asthenia Weakness') +
+  # add title
+  ggtitle('Ebola Cases by Age and Symptom')
+ebola_multivar_bar_plot
+
+
+```
+
+# Bar plots - with labels
+- here we use geom_col to create bars of a specified height
+- and we create a custom ordering of the x-axis and custom colors
+```{r}
+# filter hospitalization data to get RSV hospitalizations overall for a specific week per location
+rsv_hosp <- filter(resp_hosp, `Week Start`== "2022-11-20", `Respiratory Illness Category` == 'RSV', `Demographic Category` == 'Overall', `Care Type` == 'Hospitalizations')
+
+# adjust ordering of x-axis so that it is the statewide value, then each region in order of decreasing value
+# we use 'order' to get the order of locations in decreasing value, 
+# then use factor to set the levels in the order we determined
+ordered_locations <- rsv_hosp$Location[order(rsv_hosp$`1-Week Percent`, decreasing = TRUE)]
+adjusted_ordered_locations <- c('Statewide', ordered_locations[ordered_locations != "Statewide"])
+rsv_hosp$Location <- factor(rsv_hosp$Location, levels = adjusted_ordered_locations)
+
+rsv_hosp %>%
+  ggplot(aes(Location, `1-Week Percent`)) +
+  # creating different color bar plot for statewide vs health regions
+  geom_col(aes(fill = (Location == 'Statewide'))) +
+  # set custom fill color by hex code
+  scale_fill_manual(values = c('#92aab9', '#46738b')) +
+  # adding text of y axis value to the top of each bar plot
+  geom_text(aes(label=`1-Week Percent`), vjust=-0.3) +
+  # using theme from ggpubr package
+  theme_classic2() +
+  # adjusting axis text angle and removing legend
+  theme(axis.text.x = element_text(angle = 45, hjust=1), legend.position = 'none') +
+  # don't clip plot to extent of the plot panel to try to prevent text labels from being cut off
+  coord_cartesian(clip = "off") +
+  # add title
+  ggtitle('Hospitalization Rate for RSV for 2022-11-20')
+
+```
+
+# Lollipop Plot
+
+We can plot the same data as above in a slightly different format using a lollipop plot
+Instead of including the statewide value as a bar in the plot we will add a labeled dashed line to represent it
+```{r}
+# creating a variable of the statewide percent
+statewidelevel <- filter(rsv_hosp, Location == 'Statewide')$`1-Week Percent`
+  
+# remove statewide from the data, so we can separately add it to the plot
+filter(rsv_hosp, Location != 'Statewide') %>%
+  ggplot(aes(Location, `1-Week Percent`)) +
+  # creating a line segment for each location
+  geom_segment(aes(x = Location, xend = Location, y = 0, yend =`1-Week Percent`), size = 1.6, color = '#92aab9') +
+  # adding a circle to the end of each line segment
+  geom_point(size=6.5, fill="#713925", color = 'black', pch = 21) +
+  # adding text of the percent to end of lollipop
+  geom_text(aes(label = `1-Week Percent`), color = "white", size = 3) +
+  # add a dashed line at the location of the Statewide percent 
+  geom_hline(yintercept=statewidelevel, linetype='dotted', col = '#46738b', size = 1.1) +
+  # labeling the line (with slight offset and at selected location) on the plot
+  annotate("text", x = "Olympic Community of Health", y = (statewidelevel + .7), label = "Statewide Percent", size = 3.5) +
+  # using theme from ggpubr package
+  theme_classic2() +
+  # flip coordinates to change orientation of the plot
+  coord_flip() +
+  # remove legend
+  theme(legend.position = 'none') +
+  # add title
+  ggtitle('Hospitalization Rate for RSV for 2022-11-20')
+```
+
+# Overplotting
+We can use point transparency or plot the density of points in a plot to make it easier
+to visualize dense plots
+```{r}
+# filter to covid hospitalizations per ACH region across all weeks
+covid_hosp <- filter(resp_hosp, Location != 'Statewide' & `Demographic Category` == 'Overall' & `Care Type`=='Hospitalizations' & `Respiratory Illness Category` == 'COVID-19')
+
+# can make points more transparent (lower alpha value) to make it easier to see overlapping points
+ggplot(covid_hosp, aes(Week, `1-Week Percent`)) +
+  geom_point(alpha = 0.2) +
+  theme_minimal() +
+  ggtitle('COVID Hospitalizations')
+
+# can also bin the points into rectangles and map the density of the points
+ggplot(covid_hosp, aes(Week, `1-Week Percent`)) +
+  stat_bin2d(bins = 70) +
+  # we use a color schema from the package viridis to visualize the density
+  scale_fill_viridis() +
+  theme_minimal() +
+  ggtitle('COVID Hospitalizations')
+
+
+```
+
+Density Plot - example with Ebola cases
+
+```{r}
+# creating a density plot of ages per vaccination status
+ebola_density_plot <- ggplot(ebola) +
+  # set lower opacity (0.5) to make it possible to view the different groups
+  geom_density(aes(age_in_years, fill = `Vaccination status`), alpha = 0.5) +
+  # using theme from ggpubr package
+  theme_classic2() +
+  xlab('Age') +
+  ggtitle('Distribution of Ebola Cases by Age and Vaccination Status')
+
+ebola_density_plot
+
+
+# Another approach for visualizing density plots for multiple categories
+# ggridges package has a lot of cool possibilities for creating density plots: https://cran.r-project.org/web/packages/ggridges/vignettes/introduction.html
+ebola_density_plot_v2 <- ggplot(ebola) +
+  # use the geom_density_ridges function from the ggridges package
+  # the x value stays the same, and we use our grouping variable for the y-axis
+  geom_density_ridges(aes(x = age_in_years, y = `Vaccination status`, fill = `Vaccination status`), alpha = 0.9) +
+  # using theme from ggpubr package
+  theme_classic2() +
+  # alternate colors of the density ridges to make visualization easier
+  scale_fill_cyclical(values = c("#4040B0", "#9090F0")) +
+  xlab('Age') +
+  ggtitle('Distribution of Ebola Cases by Age and Vaccination Status') +
+  # remove legend (as categories are explained on the y-axis)
+  # adjust the positioning of text on the y axis to make it clearer which plot aligns with which label
+  theme(legend.position = 'none', axis.text.y = element_text(vjust=-2)) +
+  # truncating plot at 0, as values less than 0 don't make sense in this context
+  xlim(0,max(ebola$age_in_years, na.rm = TRUE) + 10)
+
+
+ebola_density_plot_v2
+```
+
+
+Box plot vs Violin plot 
+
+Visualizing the distribution of a continuous variable - a boxplot is a common plot type for visualizing this data, and also incorporates five summary statistics (median, two hinges, and whiskers) as well as outlying points. A violin plot is another option, which blends a box plot and a density plot. We can compare these two types of plots, and also show how to create them and include the points and use a custom color palette
+```{r}
+# for EVD status confirmed cases, plot distribution of ages per vaccination status
+ggplot(filter(ebola, EVD_status == 'Confirmed'), aes(x = `Vaccination status`, y = age_in_years, fill = `Vaccination status`)) +
+  geom_boxplot(alpha = 0.5) +
+  # adding points to plot, and using jitter to randomly move the points sightly so that they don't overlap as much
+  geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+  # setting a custom color palette
+  scale_fill_manual(values = c("steelblue4", "gold2", "seagreen", "hotpink3")) +
+  theme_minimal() +
+  # remove legend
+  theme(legend.position = "none") + 
+  ylab('Age') +
+  ggtitle('Age Distribution per Vaccination Status (box plot)')
+
+# for EVD status confirmed cases, plot distribution of ages per vaccination status
+ggplot(filter(ebola, EVD_status == 'Confirmed'), aes(x = `Vaccination status`, y = age_in_years, fill = `Vaccination status`)) +
+  geom_violin(alpha = 0.5) +
+  # adding points to plot, and using jitter to randomly move the points sightly so that they don't overlap as much
+  geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+  # setting a custom color palette
+  scale_fill_manual(values = c("steelblue4", "gold2", "seagreen", "hotpink3")) +
+  theme_minimal() +
+  # remove legend
+  theme(legend.position = "none") + 
+  ylab('Age') +
+  ggtitle('Age Distribution per Vaccination Status (violin plot)')
+
+
+```
+
+
+# Washington State Map Plot
+- using ggplot to create a map plot of WA state counties
+- get the center of each county to place labels of the county name
+- fill in each county with COVID-19 hospitalization rate using an alternate color palette 
+
+```{r}
+
+# hospitalization data contains ACH regions rather than counties
+# we can create a mapping of ACH to counties for mapping purposes
+ach_mapping <-
+  tibble(ACH = c('Olympic Community of Health', 'North Sound', 'Healthier Here', 'Elevate Health', 'Cascade Pacific Action Alliance', 'Southwest Washington', 'Greater Health Now', 'Thriving Together NCW', 'Better Health Together'),
+             counties = list(c('Clallam', 'Jefferson', 'Kitsap'), 
+                          c('Whatcom', 'Skagit', 'Snohomish', 'San Juan', 'Island'),
+                          c('King'),
+                          c('Pierce'),
+                          c('Grays Harbor', 'Mason', 'Thurston', 'Pacific', 'Lewis', 'Wahkiakum', 'Cowlitz'),
+                          c('Clark', 'Skamania', 'Klickitat'),
+                          c('Kittitas', 'Yakima', 'Benton', 'Franklin', 'Walla Walla', 'Columbia', 'Garfield', 'Asotin', 'Whitman'),
+                          c('Okanogan', 'Chelan', 'Douglas', 'Grant'),
+                          c('Adams', 'Lincoln', 'Ferry', 'Stevens', 'Pend Oreille', 'Spokane')))
+
+
+
+# import the county map data (this is available from the ggplot2 package)
+counties <- map_data("county")
+# covert county names to title format so they match with our data
+counties$subregion <- str_to_title(counties$subregion)
+
+# filter to WA state
+wa_counties <- filter(counties, region == 'washington')
+
+# get center of each county for plot labeling purposes
+cntrd <- function(x) {
+  data.frame(geosphere::centroid(as.matrix(x[,c("long", "lat")])))
+}
+centroid_list <- group_by(wa_counties, subregion) %>%
+  do(cntrd(.))
+# create table of centroid coordinates and the name of the county for labeling the plot
+centroid_list <- data.frame(long = centroid_list$lon, lat= centroid_list$lat, name = centroid_list$subregion)
+
+
+
+# filter hospitalizations data to a specified respiratory condition (COVID-19, Flu, or RSV),
+# care type (Hospitalizations or Emergency Visits) and week start
+illness <- 'COVID-19'
+filter_date <- '2024-09-22'
+cur_care_type <- 'Hospitalizations'
+resp_hosp_regions <- filter(resp_hosp, Location != 'Statewide' & `Demographic Category` == 'Overall' & `Respiratory Illness Category` == illness & `Week Start` == filter_date & `Care Type` == cur_care_type & !is.na(`1-Week Percent`))
+
+# join hospitalization data with WA mapping data
+resp_hosp_regions <- left_join(tibble(resp_hosp_regions), ach_mapping, by = c('Location' = 'ACH'))
+resp_hosp_regions <- resp_hosp_regions  %>%
+  # expand the column containing the list of counties into separate rows
+  # so there is one row per county, instead of one row per ACH region
+  unnest(counties)
+resp_hosp_regions_wa <- left_join(wa_counties, resp_hosp_regions, by = c('subregion' = 'counties'))
+
+
+# Plot map
+wa_map_plot <- ggplot(data = resp_hosp_regions_wa) +
+  # use viridis color scale - good for creating a visually accommodating distinct color scale
+  scale_fill_viridis_c() +
+  # plot lat and longitude outline of each county to create map plot and fill in county with hospitalization data
+  # outline states with white
+  geom_polygon(aes(x = long, y = lat, group = group, fill = `1-Week Percent`), color = 'white') +
+  # add label for each county name at center of county
+  geom_text(data = centroid_list,
+                       aes(label= name, x = long, y = lat), size = 3, color = 'black') +
+  # set simple theme
+  theme_bw() +
+  # add title based on data filtered
+  ggtitle(paste(illness, cur_care_type, "for", filter_date)) 
+
+wa_map_plot
+
+```
+# Alternative Process for Creating Washington State Map Plot
+- using ggplot and the sf package to create a map plot of WA state counties
+- uses more built in functions
+- map looks slightly different for island counties
+
+```{r}
+# pull US mapping data
+us_county_map <- usmap::us_map('counties')
+# subset to WA state data
+WA_map_counties <- filter(us_county_map, abbr == 'WA') %>%
+  # simplify county names
+	mutate(county = str_replace(county, " County", ""))
+# convert a geometry object to an sfc object for plotting purposes
+WA_sfc <- st_as_sfc(WA_map_counties, crs = usmap_csv()@projargs)
+# get subset of map object
+# creates sf object, which extends data.frame like objects with a  simple feature list column
+WA_sf_data <- st_sf(data.frame(fips = unique(WA_map_counties$fips), county = WA_map_counties$county, geometry = WA_sfc))
+# join map data with the data you want to plot/fill in each county with
+WA_sf_map <- left_join(WA_sf_data, resp_hosp_regions, by = c('county' = 'counties'))
+# find the centroid of each county
+WA_sf_map$centroids <- st_centroid(WA_sf_map$geometry)
+
+wa_map_plot2 <- ggplot(WA_sf_map) +
+  # use geom_sf to create map - pulls from geometry column in the data
+  # set fill for each county
+	geom_sf(aes(fill =`1-Week Percent`), color = 'white') +
+  # change fill - alternate color palette
+  scale_fill_viridis_c(option = 'plasma') +
+  # add county labels
+	geom_sf_text(aes(label = county), size = 3, color = 'black') +
+  coord_sf(crs = st_crs(4283)) + #needed to make flat/horizontally aligned map for visualizing purposes
+  # set to simple theme
+  theme_bw() +
+  # remove axis labels
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  # remove axis labels
+  xlab("") + ylab("") +
+  # add title based on data filtered
+  ggtitle(paste(illness, cur_care_type, "for", filter_date)) 
+
+wa_map_plot2
+
+# save a plot
+# optional can set the size of the plot
+ggsave(file.path(base_path, "wa_resp_hospitalizations_map_plot.png"), width = 10, height = 8)
+```
