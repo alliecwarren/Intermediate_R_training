@@ -1,5 +1,5 @@
 # Intermediate_R_training
-Notebooks for real world examples of topics from the Intermediate R training course
+Notebooks for public health examples of topics from the Intermediate R training course
 
 These notebooks correspond to various R courses from DataCamp, although they can also be used indepdently by any public health individual looking to learn R. The goal of the notebooks is to show example of the concepts of each course on real world public health data. The notebooks also show related concepts that might not be covered in the course, but which I think are useful. All data needed to run these notebooks are provided in the data folder.
 
